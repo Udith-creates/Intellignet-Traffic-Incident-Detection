@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 4
+names: ['Ambulance', 'Fire_Truck', 'Police', 'Vehicle']
+
+roboflow:
+  workspace: emergency-fksgw
+  project: indian-emergency-vehicles-pm1gh
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/emergency-fksgw/indian-emergency-vehicles-pm1gh/dataset/1
