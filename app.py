@@ -9,6 +9,17 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import streamlit.components.v1 as components
+from datetime import datetime as dt
+import requests
+import asyncio
+import sys
+
+# Windows Geolocation imports
+try:
+    from winsdk.windows.devices.geolocation import Geolocator
+    WINSDK_AVAILABLE = True
+except ImportError:
+    WINSDK_AVAILABLE = False
 
 # ----------------------------------
 # Page config
@@ -38,6 +49,12 @@ if "email_sent" not in st.session_state:
 if "email_sent_time" not in st.session_state:
     st.session_state.email_sent_time = ""
 
+if "current_location" not in st.session_state:
+    st.session_state.current_location = None
+
+if "location_fetched" not in st.session_state:
+    st.session_state.location_fetched = False
+
 # ----------------------------------
 # Load Models
 # ----------------------------------
@@ -50,36 +67,147 @@ def load_models():
 emergency_model, accident_model = load_models()
 
 # ----------------------------------
-# Browser Location
+# Location Detection Functions
 # ----------------------------------
-def get_browser_location():
-    js = """
-    <script>
-    navigator.geolocation.getCurrentPosition(
-        (pos) => {
-            const data = {
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude,
-                time: new Date().toLocaleString()
-            };
-            document.write(JSON.stringify(data));
-        },
-        (err) => {
-            document.write(JSON.stringify({error: err.message}));
-        }
-    );
-    </script>
-    """
-    result = components.html(js, height=0)
+async def get_location_from_windows_gps():
+    """Get accurate location using Windows Geolocation API (GPS/WiFi)"""
+    if not WINSDK_AVAILABLE:
+        return None
+    
     try:
-        return json.loads(result)
-    except:
-        return {}
+        locator = Geolocator()
+        locator.desired_accuracy_in_meters = 10
+        
+        pos = await locator.get_geoposition_async()
+        
+        lat = pos.coordinate.point.position.latitude
+        lon = pos.coordinate.point.position.longitude
+        accuracy = pos.coordinate.accuracy
+        
+        return {
+            "lat": round(lat, 6),
+            "lon": round(lon, 6),
+            "city": "Current Location",
+            "region": "Via GPS",
+            "country": "Windows Device",
+            "isp": "Local Network",
+            "method": "Windows GPS/WiFi Geolocation",
+            "accuracy": f"±{accuracy:.0f} meters"
+        }
+    except Exception as e:
+        print(f"Windows geolocation error: {e}")
+        return None
+
+@st.cache_data(ttl=3600)
+def get_location_from_ip():
+    """Get approximate location using IP address geolocation API"""
+    try:
+        # Try multiple services for reliability
+        services = [
+            ("https://ipapi.co/json/", lambda r: {
+                "lat": r.get("latitude"),
+                "lon": r.get("longitude"),
+                "city": r.get("city", "Unknown"),
+                "region": r.get("region", ""),
+                "country": r.get("country_name", "Unknown"),
+                "isp": r.get("org", ""),
+            }),
+            ("https://ip-api.com/json/", lambda r: {
+                "lat": r.get("lat"),
+                "lon": r.get("lon"),
+                "city": r.get("city", "Unknown"),
+                "region": r.get("region", ""),
+                "country": r.get("country", "Unknown"),
+                "isp": r.get("isp", ""),
+            }),
+        ]
+        
+        for url, parser in services:
+            try:
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and "lat" in data and "lon" in data:
+                        location = parser(data)
+                        location["method"] = "IP-based Geolocation"
+                        location["accuracy"] = "Approximate (City Level)"
+                        return location
+            except:
+                continue
+        
+        return None
+    except Exception as e:
+        print(f"IP geolocation error: {e}")
+        return None
+
+def get_current_location():
+    """Get location with Windows GPS as primary, IP-based as fallback"""
+    location = None
+    
+    # Try Windows GPS first if available
+    if WINSDK_AVAILABLE:
+        try:
+            # Get or create event loop
+            if sys.platform == 'win32':
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                location = loop.run_until_complete(get_location_from_windows_gps())
+                loop.close()
+            else:
+                location = asyncio.run(get_location_from_windows_gps())
+            
+            if location:
+                return location
+        except Exception as e:
+            print(f"Windows GPS async error: {e}")
+    
+    # Fallback to IP-based location
+    location = get_location_from_ip()
+    if location:
+        return location
+    
+    # Final fallback when all methods fail
+    return {
+        "lat": "N/A",
+        "lon": "N/A",
+        "city": "Unknown",
+        "region": "Unknown",
+        "country": "Unknown",
+        "isp": "Unknown",
+        "method": "Location unavailable",
+        "accuracy": "None"
+    }
+
+def get_current_time():
+    """Get current time in proper format"""
+    return dt.now().strftime("%Y-%m-%d %H:%M:%S")
+
+# ----------------------------------
+# Initialize Current Location at Start
+# ----------------------------------
+if not st.session_state.location_fetched:
+    with st.spinner("📍 Fetching your current location..."):
+        st.session_state.current_location = get_current_location()
+        st.session_state.location_fetched = True
+
+# Display Location Info
+if st.session_state.current_location:
+    location = st.session_state.current_location
+    col_loc = st.columns(3)
+    
+    with col_loc[0]:
+        st.metric("🗺️ Latitude", f"{location.get('lat', 'N/A')}")
+    with col_loc[1]:
+        st.metric("🗺️ Longitude", f"{location.get('lon', 'N/A')}")
+    with col_loc[2]:
+        st.metric("🔍 Method", location.get("method", "Unknown").split()[0])
+    
+    st.divider()
 
 # ----------------------------------
 # Email Function
 # ----------------------------------
-def send_accident_alert(frame, location):
+def send_accident_alert(frame, location, alert_time):
     try:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"accident_{timestamp}.jpg"
@@ -87,7 +215,12 @@ def send_accident_alert(frame, location):
 
         lat = location.get("lat", "N/A")
         lon = location.get("lon", "N/A")
-        time_str = location.get("time", "N/A")
+        city = location.get("city", "Unknown")
+        region = location.get("region", "")
+        country = location.get("country", "Unknown")
+        isp = location.get("isp", "")
+        method = location.get("method", "Unknown")
+        accuracy = location.get("accuracy", "Unknown")
 
         msg = MIMEMultipart()
         msg["From"] = SENDER_EMAIL
@@ -97,14 +230,24 @@ def send_accident_alert(frame, location):
         body = f"""
 🚨 ACCIDENT DETECTED 🚨
 
-📍 Live Location:
-Latitude : {lat}
-Longitude: {lon}
+📍 LOCATION DETAILS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Latitude  : {lat}
+Longitude : {lon}
 
-🕒 Time:
-{time_str}
+Region    : {region if region else 'N/A'}
 
-Immediate emergency response required.
+ISP       : {isp if isp else 'N/A'}
+
+🔍 DETECTION METHOD:
+Method    : {method}
+Accuracy  : {accuracy}
+
+🕒 ALERT TIMESTAMP:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{alert_time}
+
+⚠️ URGENT - Immediate emergency response required!
         """
         msg.attach(MIMEText(body, "plain"))
 
@@ -183,15 +326,17 @@ if uploaded_video:
 
         if accident_detected:
             alert_box.error("🚨 ACCIDENT DETECTED")
+            alert_time = get_current_time()
 
             if current_time - st.session_state.last_email_time > EMAIL_COOLDOWN:
-                location = get_browser_location()
-                success = send_accident_alert(frame, location)
+                # Use cached location
+                location = st.session_state.current_location if st.session_state.current_location else get_current_location()
+                success = send_accident_alert(frame, location, alert_time)
 
                 if success:
                     st.session_state.last_email_time = current_time
                     st.session_state.email_sent = True
-                    st.session_state.email_sent_time = datetime.datetime.now().strftime("%H:%M:%S")
+                    st.session_state.email_sent_time = dt.now().strftime("%H:%M:%S")
 
         else:
             alert_box.success("✅ No Accident Detected")

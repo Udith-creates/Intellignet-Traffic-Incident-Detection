@@ -6,3 +6,5 @@ pygame==2.5.2
 torch==2.1.2
 torchvision==0.16.2
 Pillow==10.1.0
+requests>=2.31.0
+winsdk>=1.0.0
