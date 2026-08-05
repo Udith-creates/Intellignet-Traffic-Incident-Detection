@@ -1,5 +1,10 @@
 import streamlit as st
-import cv2
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except Exception as _cv2_err:
+    cv2 = None
+    CV2_AVAILABLE = False
 import tempfile
 import numpy as np
 from ultralytics import YOLO
@@ -27,6 +32,16 @@ except ImportError:
 st.set_page_config(page_title="Smart Traffic AI Dashboard", layout="wide")
 st.title("🚦 Smart Traffic Management Dashboard")
 st.markdown("Emergency Vehicle Detection  |  Accident Detection")
+
+# If OpenCV failed to import, show a helpful message and stop the app early
+if not CV2_AVAILABLE:
+    st.error(
+        "OpenCV failed to import on the server (libGL or GUI libs missing).\n"
+        "On Streamlit Cloud, replace `opencv-python` with `opencv-python-headless` in `requirements.txt`,\n"
+        "then clear the app dependency cache or redeploy.\n"
+        "If you still see this error after changing requirements, paste the deployment logs here and I'll help diagnose."
+    )
+    st.stop()
 
 # ----------------------------------
 # Email Config (ENV VARIABLES)
