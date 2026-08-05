@@ -1,13 +1,8 @@
 import streamlit as st
 try:
-    try:
-        import cv2
-        CV2_AVAILABLE = True
-    except Exception as _cv2_err:
-        cv2 = None
-        CV2_AVAILABLE = False
+    import cv2
     CV2_AVAILABLE = True
-except Exception as _cv2_err:
+except Exception:
     cv2 = None
     CV2_AVAILABLE = False
 import tempfile
@@ -90,7 +85,9 @@ def load_models():
     accident_model = YOLO("best.pt")
     return emergency_model, accident_model
 
-emergency_model, accident_model = load_models()
+# Defer model loading until actually needed (avoid importing ultralytics during module import)
+emergency_model = None
+accident_model = None
 
 # ----------------------------------
 # Location Detection Functions
@@ -326,6 +323,11 @@ if uploaded_video:
     tfile = tempfile.NamedTemporaryFile(delete=False)
     tfile.write(uploaded_video.read())
     cap = cv2.VideoCapture(tfile.name)
+
+    # Load models lazily to avoid heavy imports at startup
+    if emergency_model is None or accident_model is None:
+        with st.spinner("⏳ Loading models (this may take a while)..."):
+            emergency_model, accident_model = load_models()
 
     while cap.isOpened():
         ret, frame = cap.read()
