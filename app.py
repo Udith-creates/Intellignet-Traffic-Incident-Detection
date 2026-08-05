@@ -1,13 +1,17 @@
 import streamlit as st
 try:
-    import cv2
+    try:
+        import cv2
+        CV2_AVAILABLE = True
+    except Exception as _cv2_err:
+        cv2 = None
+        CV2_AVAILABLE = False
     CV2_AVAILABLE = True
 except Exception as _cv2_err:
     cv2 = None
     CV2_AVAILABLE = False
 import tempfile
 import numpy as np
-from ultralytics import YOLO
 import smtplib, ssl, os, datetime, time, json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -75,6 +79,13 @@ if "location_fetched" not in st.session_state:
 # ----------------------------------
 @st.cache_resource
 def load_models():
+    """Lazily import Ultralytics and set a headless matplotlib backend to avoid libGL errors on Linux hosts."""
+    # Ensure matplotlib uses a non-GUI backend before ultralytics imports it
+    os.environ.setdefault("MPLBACKEND", "Agg")
+
+    # Import YOLO lazily so we control backend/env before ultralytics does heavy imports
+    from ultralytics import YOLO
+
     emergency_model = YOLO("emergency.pt")
     accident_model = YOLO("best.pt")
     return emergency_model, accident_model
